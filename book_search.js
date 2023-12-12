@@ -16,18 +16,122 @@
  * Searches for matches in scanned text.
  * @param {string} searchTerm - The word or term we're searching for. 
  * @param {JSON} scannedTextObj - A JSON object representing the scanned text.
- * @returns {JSON} - Search results.
+ * @returns {JSON} - Search results specifying the page+line that contains the start
+ *                   of the search term
  * */ 
  function findSearchTermInBooks(searchTerm, scannedTextObj) {
-    /** You will need to implement your search and 
-     * return the appropriate object here. */
-
-    var result = {
-        "SearchTerm": "",
+    let result = {
+        "SearchTerm": searchTerm,
         "Results": []
     };
-    
+
+    // Clean the search term string before using it
+    let cleanTerm = cleanText(searchTerm);
+
+    // Iterate through each book
+    for (let i = 0; i < scannedTextObj.length; i++) {
+        // Check that the book has actual scanned content and a non-empty ISBN
+        let bookContent = scannedTextObj[i].Content;
+        if (bookContent == null || bookContent.length === 0) {
+            continue;
+        }
+        let isbn = scannedTextObj[i].ISBN;
+        if (isbn == null) {
+            continue;
+        }
+
+        // Sort the book content in increasing page and line order
+        bookContent.sort(compareContent);
+
+        // Iterate through Content to join the lines of the pages of the book
+        let contentIndex = 0;
+        while (contentIndex < bookContent.length) {
+            let joinResult = joinAdjLinesOnPage(contentIndex, bookContent);
+            contentIndex = joinResult.newIndex;
+
+            // Search the term in the page text using regex
+            let matchResults = findAllRegexMatches(cleanTerm, joinResult.sectionText);
+
+            // Iterate through all matches, determine the line number where the match starts
+            // Add that starting line number to the results
+            for (let m = 0; m < matchResults.length; m++) {
+                let pageIndex = findLeftNearestIndex(matchResults[m], joinResult.lineIndices); 
+                let lineResult = {
+                    "ISBN": isbn, 
+                    "Page": joinResult.page, 
+                    "Line": joinResult.startLine + pageIndex
+                };
+                result.Results.push(lineResult);
+            }
+        }
+    }
+
     return result; 
+}
+
+
+/**
+ * Escapes special characters in a string to create a valid regular expression,
+ * to treat the string as a literal pattern in a regular expression.
+ * 
+ * Original code from: https://stackoverflow.com/a/6969486
+ * Credit to Stack Overflow user: coolaj86 (AJ ONeal)
+ * @param {string} string - The input string to escape.
+ * @returns {string} - The escaped string.
+ */
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Finds all indices of a given word/term in a text using a regular expression.
+ * 
+ * Adapted from: https://stackoverflow.com/questions/2295657/return-positions-of-a-regex-match-in-javascript
+ * RegExp constructed with help from ChatGPT, which was likely trained on information
+ * from the many helpful devs who put Regex education onto the Internet.
+ * @param {string} word - The word/term to search for.
+ * @param {string} text - The text in which to search for the term.
+ * @returns {number[]} - An array containing the starting indices of all matches.
+ */
+function findAllRegexMatches(word, text) {
+    let results = [];
+    var re = new RegExp(`(?:^|\\W)${escapeRegExp(word)}(?:$|\\W)`, 'g');
+    while ((match = re.exec(text)) != null) {
+        let matchIndex = match.index;
+        // If the character at the index is non-word, increment by 1 to obtain
+        // index of the actual word/phrase
+        if (/\W/.test(text.charAt(match.index))) {
+            matchIndex += 1;
+        }
+        results.push(matchIndex);
+    }
+    return results;
+}
+
+/**
+ * Finds the index of the nearest number to the left of a given number, in a sorted array of numbers.
+ * @param {number} x - The given number.
+ * @param {number[]} nums - The sorted array of numbers.
+ * @returns {number} - The index of the number to the left.
+ */
+function findLeftNearestIndex(x, nums) {
+    // Use binary search to find the closest index to the left
+    let low = 0;
+    let high = nums.length - 1;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const midValue = nums[mid];
+
+        if (midValue <= x) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    // At this point, low is the insertion point, and high is the index before it
+    const closestIndex = high;
+    return closestIndex;
 }
 
 /**
@@ -67,9 +171,9 @@ function processLineEnd(line) {
 function compareContent(a, b) {
     // Compare by 'Page'
     if (a.Page < b.Page) {
-      return -1;
+        return -1;
     } else if (a.Page > b.Page) {
-      return 1;
+        return 1;
     } 
 
     // If 'Page' properties are equal, compare by 'Line'
@@ -209,6 +313,144 @@ if (test2result.Results.length == 1) {
     console.log("Received:", test2result.Results.length);
 }
 
+/** 
+ * Negative test: Under assumption that the search term is a complete, well-formed
+ * word or phrase, searching 'my' will not return results, even though
+ * 'myself' exists in twentyLeaguesIn
+ */
+const test3result = findSearchTermInBooks("my", twentyLeaguesIn);
+if (test3result.Results.length === 0 && test3result.SearchTerm == "my") {
+    console.log("PASS: Test 3 - Negative result, Complete search term assumption");
+} else {
+    console.log("FAIL: Test 3 - Negative result, Complete search term assumption");
+}
+
+/** 
+ * Negative test: Text is not at all present.
+ */
+const test4result = findSearchTermInBooks("cowabunga", twentyLeaguesIn);
+if (test4result.Results.length === 0) {
+    console.log("PASS: Test 4 - Negative result, Term is not at all present in text");
+} else {
+    console.log("FAIL: Test 4 - Negative result, Term is not at all present in text");
+}
+
+/** 
+ * Negative test: Case-sensitive.
+ */
+const test5result = findSearchTermInBooks("canadian", twentyLeaguesIn);
+if (test5result.Results.length === 0) {
+    console.log("PASS: Test 5 - Negative result, Case-sensitive");
+} else {
+    console.log("FAIL: Test 5 - Negative result, Case-sensitive");
+}
+
+/** 
+ * Positive test: Word has been hyphen split at the end of the line
+ */
+const test6result = findSearchTermInBooks("darkness", twentyLeaguesIn);
+if (test6result.Results.length === 1 && test6result.Results[0].Page === 31 
+    && test6result.Results[0].Line === 8) {
+    console.log("PASS: Test 6 - Positive result, Split hyphenated word at end of line");
+} else {
+    console.log("FAIL: Test 6 - Positive result, Split hyphenated word at end of line");
+}
+
+/** 
+ * Positive test: Multi-word search term spans multiple lines
+ */
+const test7result = findSearchTermInBooks("the Canadian's eyes", twentyLeaguesIn);
+if (test7result.Results.length === 1 && test7result.Results[0].Page === 31 
+    && test7result.Results[0].Line === 9) {
+    console.log("PASS: Test 7 - Positive result, Multi-word search term spans multiple lines");
+} else {
+    console.log("FAIL: Test 7 - Positive result, Multi-word search term spans multiple lines");
+}
+
+/** 
+ * Positive test: Multi-word search term contained in only one line
+ */
+const test8result = findSearchTermInBooks("on by her own momentum", twentyLeaguesIn);
+if (test8result.Results.length === 1 && test8result.Results[0].Page === 31 
+    && test8result.Results[0].Line === 8) {
+    console.log("PASS: Test 8 - Positive result, Multi-word search term contained in only one line");
+} else {
+    console.log("FAIL: Test 8 - Positive result, Multi-word search term contained in only one line");
+}
+
+/** 
+ * Positive test: Search term contained multiple times in one line
+ */
+const testMultiple = [
+    {
+        "Title": "",
+        "ISBN": "1",
+        "Content": [
+            {
+                "Page": 2,
+                "Line": 1,
+                "Text": "landing to sing a while."
+            },
+            {
+                "Page": 1,
+                "Line": 1,
+                "Text": "as a bird flew onto a branch,"
+            }
+        ] 
+    }
+]
+const test9result = findSearchTermInBooks("a", testMultiple);
+if (test9result.Results.length === 3 && test9result.Results[1].Page === 1
+    && test9result.Results[0].Line === 1) {
+    console.log("PASS: Test 9 - Positive result, Search term contained multiple times in one line");
+} else {
+    console.log("FAIL: Test 9 - Positive result, Search term contained multiple times in one line");
+}
+
+/** 
+ * Positive test: Dirty search term in dirty text
+ */
+const testDirty = [
+    {
+        "Title": "",
+        "ISBN": "1",
+        "Content": [
+            {
+                "Page": 1,
+                "Line": 2,
+                "Text": "lot's of \t extra  spaces"
+            },
+        ] 
+    },
+    {
+        "Title": "",
+        "ISBN": "2",
+        "Content": [
+            {
+                "Page": 3,
+                "Line": 4,
+                "Text": "  extra spaces"
+            },
+        ] 
+    },
+]
+const test10result = findSearchTermInBooks(" \n extra  spaces", testDirty);
+if (test10result.Results.length === 2 && test10result.Results[1].ISBN === "2") {
+    console.log("PASS: Test 10 - Positive result, Dirty search term in dirty text");
+} else {
+    console.log("FAIL: Test 10 - Positive result, Dirty search term in dirty text");
+}
+
+/** 
+  * Negative test: Phrase spans multiple pages
+  * TODO: Decide if the scanned content input won't have missing lines.
+  */
+const test11result = findSearchTermInBooks("a branch, landing to sing", testMultiple);
+if (test11result.Results.length === 0) {
+    console.log("PASS: Test 11 - Negative result, Phrase spans multiple pages");
+} else {
+    console.log("FAIL: Test 11 - Negative result, Phrase spans multiple pages");
+}
 
 /**
  * Unit test for the compareContent function.
@@ -239,9 +481,9 @@ const twentyLeaguesScrambled = [
 ]
 twentyLeaguesScrambled[0].Content.sort(compareContent)
 if (JSON.stringify(twentyLeaguesScrambled) === JSON.stringify(twentyLeaguesIn)) {
-    console.log("PASS: Test compareContent")
+    console.log("PASS: Test compareContent");
 } else {
-    console.log("FAIL: Test compareContent")
+    console.log("FAIL: Test compareContent");
 }
 
 /**
@@ -250,13 +492,18 @@ if (JSON.stringify(twentyLeaguesScrambled) === JSON.stringify(twentyLeaguesIn)) 
  */
 let testJoinresult = joinAdjLinesOnPage(0, twentyLeaguesIn[0].Content);
 let testJoinresultIndices = testJoinresult.lineIndices;
+let expectedText = `now simply went on by her own momentum. The darkness was then profound; \
+and however good the Canadian's eyes were, I asked myself \
+how he had managed to see, and `;
+
 if (testJoinresult.sectionText.charAt(testJoinresultIndices[1]) === 'n' &&
     testJoinresult.sectionText.charAt(testJoinresultIndices[2]) === 'e' &&
-    testJoinresult.newIndex === 3) 
+    testJoinresult.newIndex === 3 &&
+    testJoinresult.sectionText === expectedText) 
 {
-    console.log("PASS: Test expected behavior of joinAdjLinesOnPage")
+    console.log("PASS: Test joinAdjLinesOnPage expected behavior");
 } else {
-    console.log("FAIL: Test expected behavior of joinAdjLinesOnPage")
+    console.log("FAIL: Test joinAdjLinesOnPage expected behavior");
 }
 
 /**
@@ -265,7 +512,7 @@ if (testJoinresult.sectionText.charAt(testJoinresultIndices[1]) === 'n' &&
  */
 let testJoinInvalidresult = joinAdjLinesOnPage(0, []);
 if (testJoinInvalidresult === null) {
-    console.log("PASS: Test joinAdjLinesOnPage on empty contentList")
+    console.log("PASS: Test joinAdjLinesOnPage on empty contentList");
 } else {
     console.log("FAIL: Test joinAdjLinesOnPage on empty contentList");
     console.log("Expected: null");
@@ -313,11 +560,34 @@ const testJoinDiffPage = [
         "Text": "DON'T include me"
     },
 ] 
-let testJoinDiffPageresult = joinAdjLinesOnPage(0, testJoinDiffLine);
-if (testJoinDiffLineresult.newIndex === 1) {
+let testJoinDiffPageresult = joinAdjLinesOnPage(0, testJoinDiffPage);
+if (testJoinDiffPageresult.newIndex === 1) {
     console.log("PASS: Test joinAdjLinesOnPage on non-same Page");
 } else {
     console.log("FAIL: Test joinAdjLinesOnPage on non-same Page");
     console.log("Expected: newIndex === 1");
-    console.log("Received:", testJoinDiffLineresult);
+    console.log("Received:", testJoinDiffPageresult);
+}
+
+/**
+ * Unit test for the findLeftNearestIndex function.
+ * Checks correct indices retuned on a typical use case for our page index search.
+ */
+let testLeft = [findLeftNearestIndex(-1, [0, 25, 33]), findLeftNearestIndex(25, [0, 25, 33]), 
+                findLeftNearestIndex(52, [0, 25, 33])];
+if (testLeft[0] === -1 && testLeft[1] === 1 && testLeft[2] === 2) {
+    console.log("PASS: Test findLeftNearestIndex");
+} else {
+    console.log("FAIL: Test findLeftNearestIndex");
+}
+
+/**
+ * Unit test for the findAllRegexMatches function.
+ * Checks correct indices retuned on a typical use case for our page index search.
+ */
+let testRegex = findAllRegexMatches('hot dog', 'hot dog, hot doggity, hot dog! hot dog3, Hot Dog');
+if (testRegex.length === 2 && testRegex[0] === 0 && testRegex[1] === 22) {
+    console.log("PASS: Test findAllRegexMatches");
+} else {
+    console.log("FAIL: Test findAllRegexMatches");
 }
