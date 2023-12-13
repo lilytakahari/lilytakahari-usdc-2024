@@ -86,7 +86,7 @@ function escapeRegExp(string) {
 /**
  * Finds all indices of a given word/term in a text using a regular expression.
  * 
- * Adapted from: https://stackoverflow.com/questions/2295657/return-positions-of-a-regex-match-in-javascript
+ * Adapted from: https://stackoverflow.com/a/2295681
  * RegExp constructed with help from ChatGPT, which was likely trained on information
  * from the many helpful devs who put Regex education onto the Internet.
  * @param {string} word - The word/term to search for.
